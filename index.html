@@ -137,6 +137,10 @@ button{font-family:inherit}
 .rchip.on{background:var(--primary-soft);border-color:var(--primary);color:var(--primary-ink);font-weight:700}
 .randops{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
 .randops .mini{font-size:12px;color:var(--muted);cursor:pointer;text-decoration:underline}
+.rscopelbl{font-size:12px;font-weight:700;color:var(--primary);background:var(--primary-soft);padding:3px 9px;border-radius:8px}
+.phright{display:flex;align-items:center;gap:8px}
+.gear{background:#f1f3f8;border:none;border-radius:9px;width:30px;height:30px;font-size:15px;cursor:pointer;color:var(--ink);line-height:1}
+.gear:hover{background:var(--primary-soft)}
 
 /* ---------- REVIEW BOARD ---------- */
 .revsec{margin-bottom:18px}
@@ -316,7 +320,7 @@ button{font-family:inherit}
 <!-- random overlay -->
 <div class="overlay" id="randOv">
   <div class="panelbox">
-    <div class="ph"><span>🎲 随机抽取 · 勾选板块</span><b id="randCount">0 张</b></div>
+    <div class="ph"><span>🎲 随机抽取</span><span class="phright"><span id="randScope" class="rscopelbl" style="display:none"></span><button class="gear" id="randEdit" title="修改抽取范围（自定义随机抽取）">⚙</button><b id="randCount">0 张</b></span></div>
     <div class="randchips" id="randChips"></div>
     <div class="randops">
       <button class="btn" id="randGo">开始随机抽</button>
@@ -344,7 +348,7 @@ const LAYER_ORDER = ["上游原料", "固化剂", "树脂", "助剂", "TPU", "�
 const LAYER_COLOR = {"上游原料": "#6366f1", "固化剂": "#ec4899", "树脂": "#10b981", "助剂": "#f59e0b", "TPU": "#06b6d4", "胶粘剂": "#8b5cf6", "半导体": "#3b82f6", "医疗": "#ef4444", "汽车": "#14b8a6", "化妆品": "#db2777", "英语学习": "#f97316"};
 const LAYER_TINT = {"上游原料": "#eef0fe", "固化剂": "#fdeaf4", "树脂": "#e7f8f0", "助剂": "#fef4e3", "TPU": "#e3f8fb", "胶粘剂": "#f1ecfe", "半导体": "#e8f0fe", "医疗": "#fdeaea", "汽车": "#e4f8f5", "化妆品": "#fceaf3", "英语学习": "#fef0e6"};
 
-const K_PROG='wb_prog_v1', K_STR='wb_streak_v1', K_DEL='wb_del_v1', K_REV='wb_reviews_v1', K_ACT='wb_act_v1', K_MAIN='wb_main_v1', K_THEME='wb_theme_v1', K_SR='wb_sr_v1';
+const K_PROG='wb_prog_v1', K_STR='wb_streak_v1', K_DEL='wb_del_v1', K_REV='wb_reviews_v1', K_ACT='wb_act_v1', K_MAIN='wb_main_v1', K_THEME='wb_theme_v1', K_SR='wb_sr_v1', K_RAND='wb_rand_v1';
 let progress={}, streak={date:'',count:0}, deleted={}, reviews={daily:{},weekly:{}}, activity={}, THEME={cat:'',note:'',week:''}, sr={};
 try{progress=JSON.parse(localStorage.getItem(K_PROG)||'{}')}catch(e){}
 try{streak=JSON.parse(localStorage.getItem(K_STR)||'{"date":"","count":0}')}catch(e){}
@@ -353,6 +357,8 @@ try{reviews=JSON.parse(localStorage.getItem(K_REV)||'{"daily":{},"weekly":{}}')}
 try{activity=JSON.parse(localStorage.getItem(K_ACT)||'{}')}catch(e){}
 try{THEME=JSON.parse(localStorage.getItem(K_THEME)||'{"cat":"","note":"","week":""}')}catch(e){}
 try{sr=JSON.parse(localStorage.getItem(K_SR)||'{}')}catch(e){}
+let randSel=new Set(), randCustomSel=[];
+try{randCustomSel=JSON.parse(localStorage.getItem(K_RAND)||'[]')}catch(e){}
 
 function saveAll(){localStorage.setItem(K_PROG,JSON.stringify(progress));localStorage.setItem(K_STR,JSON.stringify(streak));
   localStorage.setItem(K_DEL,JSON.stringify(deleted));localStorage.setItem(K_REV,JSON.stringify(reviews));localStorage.setItem(K_ACT,JSON.stringify(activity));localStorage.setItem(K_THEME,JSON.stringify(THEME));localStorage.setItem(K_SR,JSON.stringify(sr));}
@@ -541,8 +547,38 @@ function doDeleteSilent(id){deleted[id]=1;if(progress[id])delete progress[id];if
 document.getElementById('studyOv').onclick=(e)=>{if(e.target.id==='studyOv')document.getElementById('studyOv').classList.remove('show');};
 
 /* ---------- RANDOM OVERLAY (multi-select) ---------- */
-let randSel=new Set(), randPool=[], randIdx=0;
-function openRand(){buildRandChips();document.getElementById('randStage').style.display='none';document.getElementById('randOv').classList.add('show');}
+let randPool=[], randIdx=0;
+function openRand(from){
+  // from: 'pro' | 'en' | 'theme' → 直接抽当前板块内容；不传 → 用自定义范围（顶部🎲）
+  if(from==='pro'||from==='en'||from==='theme'){
+    let scope=[];
+    if(from==='pro') scope=curCat?[curCat]:catsOfLayer(curLayer);
+    else if(from==='en') scope=['英语'];
+    else if(from==='theme') scope=THEME.cat?[THEME.cat]:[];
+    if(!scope.length){ // 本周主题未设定：退回让用户自选
+      randSel=new Set(randCustomSel);buildRandChips();updateRandCount();
+      document.getElementById('randStage').style.display='none';
+      document.getElementById('randScope').style.display='none';
+      document.getElementById('randOv').classList.add('show');return;
+    }
+    randSel=new Set(scope);buildRandChips();updateRandCount();
+    randPool=DATA.filter(d=>!deleted[d.id]&&randSel.has(d.category));
+    if(!randPool.length){alert('该范围暂无卡片');return;}
+    randIdx=0;drawRand();
+    document.getElementById('randStage').style.display='block';
+    document.getElementById('randScope').style.display='inline-block';
+    document.getElementById('randScope').textContent='范围：'+scopeLabel(scope);
+    document.getElementById('randOv').classList.add('show');
+  } else {
+    // 顶部「随机抽」：沿用上次自定义范围，先勾选
+    randSel=new Set(randCustomSel);buildRandChips();updateRandCount();
+    document.getElementById('randStage').style.display='none';
+    document.getElementById('randScope').style.display='none';
+    document.getElementById('randOv').classList.add('show');
+  }
+}
+function scopeLabel(set){const a=[...set];if(a.length>2)return a.length+' 个板块';if(a.length===0)return '全部';return a.join(' · ');}
+function showRandChips(){document.getElementById('randStage').style.display='none';document.getElementById('randScope').style.display='none';buildRandChips();updateRandCount();}
 function buildRandChips(){
   const box=document.getElementById('randChips');box.innerHTML='';
   // group by layer
@@ -568,8 +604,10 @@ document.getElementById('randNone').onclick=()=>{randSel.clear();buildRandChips(
 document.getElementById('randGo').onclick=()=>{
   randPool=DATA.filter(d=>!deleted[d.id]&&(randSel.size?randSel.has(d.category):true));
   if(!randPool.length){alert('该范围暂无卡片');return;}
+  randCustomSel=[...randSel];localStorage.setItem(K_RAND,JSON.stringify(randCustomSel)); // 记住你的自定义随机抽取
   randIdx=0;drawRand();
   document.getElementById('randStage').style.display='block';
+  if(randSel.size){document.getElementById('randScope').style.display='inline-block';document.getElementById('randScope').textContent='范围：'+scopeLabel(randSel);}
 };
 function drawRand(){if(!randPool.length)return;if(randIdx>=randPool.length)randIdx=0;const d=randPool[randIdx];
   renderFlip('r',d);
@@ -579,10 +617,11 @@ document.getElementById('rOk').onclick=()=>{if(randPool[randIdx])mark(randPool[r
 document.getElementById('rRev').onclick=()=>{if(randPool[randIdx])mark(randPool[randIdx].id,'review');randIdx=(randIdx+1)%randPool.length;drawRand();};
 document.getElementById('rNext').onclick=()=>{randIdx=(randIdx+1)%randPool.length;drawRand();};
 document.getElementById('rDel').onclick=()=>{if(randPool[randIdx]){const id=randPool[randIdx].id;doDeleteSilent(id);randPool=randPool.filter(x=>x.id!==id);if(randPool.length)drawRand();else{document.getElementById('randStage').style.display='none';buildRandChips();}}};
-document.getElementById('randBack').onclick=()=>{document.getElementById('randStage').style.display='none';buildRandChips();};
+document.getElementById('randBack').onclick=showRandChips;
+document.getElementById('randEdit').onclick=showRandChips;
 document.getElementById('randOv').onclick=(e)=>{if(e.target.id==='randOv')document.getElementById('randOv').classList.remove('show');};
-document.getElementById('randPro').onclick=openRand;
-document.getElementById('randEn').onclick=openRand;
+document.getElementById('randPro').onclick=()=>openRand('pro');
+document.getElementById('randEn').onclick=()=>openRand('en');
 
 /* ---------- 富文本渲染 + 填空 + 记忆曲线辅助 ---------- */
 let activeBlank=false, activePrefix='st';
@@ -681,7 +720,7 @@ function renderThemeCur(){
     '<div class="li">主攻方向：<b>'+esc(THEME.cat)+'</b>（共 '+n+' 张卡）</div>'+
     (THEME.note?'<div class="li">聚焦：'+esc(THEME.note)+'</div>':'')+
     '<button class="btn soft" id="themeStudy" style="margin-top:10px">🎯 学本周主题卡</button></div>';
-  document.getElementById('themeStudy').onclick=()=>{randSel=new Set([THEME.cat]);openRand();};
+  document.getElementById('themeStudy').onclick=()=>{openRand('theme');};
 }
 document.getElementById('themeSave').onclick=()=>{
   THEME={cat:document.getElementById('themeSel').value,note:document.getElementById('themeNote').value.trim(),week:isoWeekStr(new Date())};
